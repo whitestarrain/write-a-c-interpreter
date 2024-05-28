@@ -25,22 +25,274 @@ int *pc,   // program counter
     ax,    // register to store the results of calculations
     cycle;
 
-// instructions
 // clang-format off
+// instructions
 enum
 {
     LEA, IMM, JMP, CALL, JZ, JNZ, ENT, ADJ, LEV, LI, LC, SI, SC, PUSH,
     OR, XOR, AND, EQ, NE, LT, GT, LE, GE, SHL, SHR, ADD, SUB, MUL, DIV, MOD,
     OPEN, READ, CLOS, PRTF, MALC, MSET, MCMP, EXIT
 };
+
+// tokens and classes (operators last and in precedence order)
+enum {
+    Num=128, Fun, Sys, Glo, Loc, Id,
+    Char, Else, Enum, If, Int, Return, Sizeof, While,
+    Assign, Cond, Lor, Lan, Or, Xor, And, Eq, Ne, Lt, Gt, Le, Ge, Shl, Shr, Add, Sub, Mul, Div, Mod, Inc, Dec, Brak
+};
+
+int  token_val;    // value of current token (mainly for number)
+int *current_id,   // current parsed ID
+    *symbols;      // symbol table
+
+// fields of identifier
+enum {Token, Hash, Name, Type, Class, Value, BType, BClass, BValue, IdSize};
+
+// type of variable/function
+enum { CHAR, INT, PTR };
+int *idmain;   // the `main` function
+
 // clang-format on
 
 /**
+ * lexical analyzer
  * get next token
  */
 void next()
 {
-    token = *src++;
+    char *last_pos;
+    int   hash; // hash value
+    while ((token = *src)) {
+        ++src;
+        if (token == '\n') {
+            // new line
+            ++line;
+        }
+        else if (token == '#') {
+            // skip macro, because we will not support it
+            while (*src != 0 && *src != '\n') {
+                src++;
+            }
+        }
+        else if ((token >= 'a' && token <= 'z') || (token >= 'A' && token <= 'Z') || token == '_') {
+            // parse identifier
+            last_pos = src - 1;
+            hash     = token;
+            while ((*src >= 'a' && *src <= 'z') || (*src >= 'A' && *src <= 'Z') || (*src >= '0' && *src <= '9') || (*src == '_')) {
+                hash = hash * 147 + *src;
+                src++;
+            }
+
+            // look for existing identiifier, linear search
+            current_id = symbols;
+            while (current_id[Token]) {
+                if (current_id[Hash] == hash &&
+                    !memcmp((char *)current_id[Name], last_pos, src - last_pos)) {
+                    // found one, return
+                    token = current_id[Token];
+                    return;
+                }
+                current_id = current_id + IdSize;
+            }
+
+            // store new ID
+            current_id[Name] = (int)last_pos;   // 32-bit machine, sizeof(int) == sizeof(char *)
+            current_id[Hash] = hash;
+            token = current_id[Token] = Id;
+            return;
+        }
+        else if (token >= '0' && token <= '9') {
+            // parse number, three kinds: dec(123) hex(0x123) oct(017)
+            token_val = token - '0';
+            if (token_val > 0) {
+                // dec, starts with [1-9]
+                while (*src >= '0' && *src <= '9') {
+                    token_val = token_val * 10 + *src++ - '0';
+                }
+            }
+            else {
+                // starts with number 0
+                if (*src == 'x' || *src == 'X') {
+                    // hex
+                    token = *++src;
+                    while ((token >= '0' && token <= '9') || (token >= 'a' && token <= 'f') ||
+                           (token >= 'A' && token <= 'F')) {
+                        // (token & 15) to get the hex single digit value of token (from c4)
+                        token_val = token_val * 16 + (token & 15) + (token >= 'A' ? 9 : 0);
+                        token     = *++src;
+                    }
+                }
+                else {
+                    // oct
+                    while (*src >= '0' && *src <= '7') {
+                        token_val = token_val * 8 + *src++ - '0';
+                    }
+                }
+            }
+            token = Num;
+            return;
+        }
+        else if (token == '"' || token == '\'') {
+            // parse string literal, currently, the only supported escape character is '\n',
+            // store the string literal into data
+            last_pos = data;
+            while (*src != 0 && *src != token) {
+                token_val = *src++;
+                if (token_val == '\\') {
+                    // escape character
+                    token_val = *src++;
+                    if (token_val == 'n') {
+                        token_val = '\n';
+                    }
+                }
+                if (token == '"') {
+                    *data++ = token_val;
+                }
+            }
+            src++;
+            if (token == '"') {
+                // token is string, token_val is string address
+                token_val = (int)last_pos;
+            }
+            else {
+                // if it is a single character, return Num token
+                token = Num;
+            }
+            return;
+        }
+        else if (token == '/') {
+            // comments or divide operator
+            if (*src == '/') {
+                // skip comments
+                while (*src != 0 && *src != '\n') {
+                    ++src;
+                }
+            }
+            else {
+                // divide operator
+                token = Div;
+                return;
+            }
+        }
+        else if (token == '=') {
+            // parse '==' and '='
+            if (*src == '=') {
+                src++;
+                token = Eq;
+            }
+            else {
+                token = Assign;
+            }
+            return;
+        }
+        else if (token == '+') {
+            // parse '+' and '++'
+            if (*src == '+') {
+                src++;
+                token = Inc;
+            }
+            else {
+                token = Add;
+            }
+            return;
+        }
+        else if (token == '-') {
+            // parse '-' and '--'
+            if (*src == '-') {
+                src++;
+                token = Dec;
+            }
+            else {
+                token = Sub;
+            }
+            return;
+        }
+        else if (token == '!') {
+            // parse '!='
+            if (*src == '=') {
+                src++;
+                token = Ne;
+            }
+            return;
+        }
+        else if (token == '<') {
+            // parse '<=', '<<', '<'
+            if (*src == '=') {
+                src++;
+                token = Le;
+            }
+            else if (*src == '<') {
+                src++;
+                token = Shl;
+            }
+            else {
+                token = Lt;
+            }
+            return;
+        }
+        else if (token == '>') {
+            // parse '>=', '>>', '>'
+            if (*src == '=') {
+                src++;
+                token = Ge;
+            }
+            else if (*src == '>') {
+                src++;
+                token = Shr;
+            }
+            else {
+                token = Gt;
+            }
+            return;
+        }
+        else if (token == '|') {
+            // parse '|', '||'
+            if (*src == '|') {
+                src++;
+                token = Lor;
+            }
+            else {
+                token = Or;
+            }
+            return;
+        }
+        else if (token == '&') {
+            // parse '&&', '&'
+            if (*src == '&') {
+                src++;
+                token = Lan;
+            }
+            else {
+                token = And;
+            }
+            return;
+        }
+        else if (token == '^') {
+            token = Xor;
+            return;
+        }
+        else if (token == '%') {
+            token = Mod;
+            return;
+        }
+        else if (token == '*') {
+            token = Mul;
+            return;
+        }
+        else if (token == '[') {
+            token = Brak;
+            return;
+        }
+        else if (token == '?') {
+            token = Cond;
+            return;
+        }
+        else if (token == '~' || token == ';' || token == '{' || token == '}' || token == '(' ||
+                 token == ')' || token == ']' || token == ',' || token == ':') {
+            // directly return the character as token;
+            return;
+        }
+    }
     return;
 }
 
@@ -215,26 +467,7 @@ int main(int argc, char *argv[])
     poolsize = 256 * 1024;
     line     = 1;
 
-    // open source file
-    if ((fd = open(*argv, 0)) < 0) {
-        printf("could not open(%s)\n", *argv);
-        return -1;
-    }
-
-    if (!(src = old_src = malloc(poolsize))) {
-        printf("could not malloc(%d) for souce area\n", fd);
-        return -1;
-    }
-
-    // read the source file
-    if ((i = read(fd, src, poolsize - 1)) < 0) {
-        printf("read() return %d\n", i);
-        return -1;
-    }
-    src[i] = 0;   // add EOF character
-    close(fd);
-
-    // allocate memory for virtual machine
+    /* allocate memory for virtual machine */
     if ((text = old_text = malloc(poolsize)) < 0) {
         printf("could not malloc(%d) for text area", poolsize);
         return -1;
@@ -247,24 +480,55 @@ int main(int argc, char *argv[])
         printf("could not malloc(%d) for stack area", poolsize);
         return -1;
     }
+    if ((symbols = malloc(poolsize)) < 0) {
+        printf("could not malloc(%d) for symbols table", poolsize);
+        return -1;
+    }
     memset(text, 0, poolsize);
     memset(data, 0, poolsize);
     memset(stack, 0, poolsize);
 
-    // initialization registers
+    /* initialization registers */
     bp = sp = (int *)((int)stack + poolsize);
     ax      = 0;
 
-    i         = 0;
-    text[i++] = IMM;
-    text[i++] = 10;
-    text[i++] = PUSH;
-    text[i++] = IMM;
-    text[i++] = 20;
-    text[i++] = ADD;
-    text[i++] = PUSH;
-    text[i++] = EXIT;
-    pc        = text;
+    /* add keywords to symbol table */
+    src = "char else enum if int return sizeof while open read close printf malloc memset memcmp "
+          "exit void main";
+    i   = Char;
+    // add keywords to symbol table
+    while (i <= While) {
+        next();
+        current_id[Token] = i++;
+    }
+    // add library to symbol table
+    i = OPEN;
+    while (i <= EXIT) {
+        next();
+        current_id[Class] = Sys;
+        current_id[Type]  = INT;
+        current_id[Value] = i++;
+    }
+    // clang-format off
+    next(); current_id[Token] = Char;   // handle void type
+    next(); idmain = current_id;        // keep track of main
+    // clang-format on
+
+    /* open and read source file */
+    if ((fd = open(*argv, 0)) < 0) {
+        printf("could not open(%s)\n", *argv);
+        return -1;
+    }
+    if (!(src = old_src = malloc(poolsize))) {
+        printf("could not malloc(%d) for souce area\n", fd);
+        return -1;
+    }
+    if ((i = read(fd, src, poolsize - 1)) < 0) {
+        printf("read() return %d\n", i);
+        return -1;
+    }
+    src[i] = 0;   // add EOF character
+    close(fd);
 
     program();
     return eval();
