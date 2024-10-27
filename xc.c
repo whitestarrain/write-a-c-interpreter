@@ -57,6 +57,9 @@ int basetype;
 // type of an expression
 int expr_type;
 
+ // index of bp pointer on stack
+int index_of_bp;
+
 // clang-format on
 
 /**
@@ -312,6 +315,13 @@ void match(int tk)
     }
 }
 
+/**
+ * analytical expression
+ */
+void expression() {}
+
+void statement() {}
+
 void enum_declaration()
 {
     // parse enum [id] { a = 1, b = 3, ...}
@@ -341,7 +351,140 @@ void enum_declaration()
     }
 }
 
-void function_declaration() {}
+void function_parameter()
+{
+    int type;
+    int params;
+    params = 0;
+
+    while (token != ')') {
+
+        // parse: int ...
+        type = INT;
+        if (token == Int) {
+            type = INT;
+            match(Int);
+        }
+        else if (token == Char) {
+            type = CHAR;
+            match(Char);
+        }
+        // parse: int *...
+        while (token == Mul) {
+            match(Mul);
+            type = type + PTR;
+        }
+
+        // parse: int name, ...
+        if (token != Id) {
+            printf("%d: bad parameter declarations\n", line);
+            exit(-1);
+        }
+        if (current_id[Class] == Loc) {
+            printf("%d: duplicate parameter declarations\n", line);
+        }
+        match(Id);
+
+        // store the local variable
+        current_id[BClass] = current_id[Class];
+        current_id[BType]  = current_id[Type];
+        current_id[BValue] = current_id[Value];
+        current_id[Class]  = Loc;
+        current_id[Type]   = type;
+        current_id[Value]  = params++;   // index of current parameter
+
+        if (token == ',') {
+            match(',');
+        }
+
+        index_of_bp = params + 1;
+    }
+}
+
+void function_body()
+{
+    // type func_name (...) {...}
+    //                   -->|   |<--
+
+    // ... {
+    // 1. local declarations
+    // 2. statements
+    // }
+    int pos_local;   // position of local variable on the stack;
+    int type;
+    pos_local = index_of_bp;
+    while (token == Int || token == Char) {
+        // local variable declaration, jusk like global variables or params
+        basetype = (token == Int) ? INT : CHAR;
+        match(token);
+
+        while (token != ';') {
+            // parse: int name1, name2 ...;
+            type = basetype;
+            while (token == Mul) {
+                match(Mul);
+                type = type + PTR;
+            }
+            if (token != Id) {
+                // invalid declaration
+                printf("%d: bad local declaration\n", line);
+                exit(-1);
+            }
+            if (current_id[Class] == Loc) {
+                // identifier exist
+                printf("%d: duplicate local declaration\n", line);
+                exit(-1);
+            }
+            match(Id);
+
+            // store the local variable
+            current_id[BClass] = current_id[Class];
+            current_id[BType]  = current_id[Type];
+            current_id[BValue] = current_id[Value];
+            current_id[Class]  = Loc;
+            current_id[Type]   = type;
+            current_id[Value]  = ++pos_local;   // index of current parameter
+
+            if (token == ',') {
+                match(',');
+            }
+        }
+        match(';');
+    }
+    // generate asm code
+    // save the stack size for local variables
+    *++text = ENT;
+    *++text = pos_local - index_of_bp;
+
+    // statements
+    while (token != '}') {
+        statement();
+    }
+
+    // emit code for leaving the sub function
+    *++text = LEV;
+}
+
+void function_declaration()
+{
+    match('(');
+    function_parameter();
+    match(')');
+    match('{');
+    function_body();
+
+    // unbind local variable declarations for all local variables
+    // prevent local variable cover global variable
+    current_id = symbols;
+    while (current_id[Token]) {
+        if (current_id[Class] == Loc) {
+            current_id[Class] = current_id[BClass];
+            current_id[Type]  = current_id[BType];
+            current_id[Value] = current_id[BValue];
+        }
+        current_id = current_id + IdSize;
+    }
+}
 
 void global_declaration()
 {
@@ -425,11 +568,6 @@ void global_declaration()
     }
     next();
 }
-
-/**
- * analytical expression
- */
-void expression() {}
 
 /**
  * program entry
