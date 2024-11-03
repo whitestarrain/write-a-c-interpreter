@@ -320,7 +320,100 @@ void match(int tk)
  */
 void expression() {}
 
-void statement() {}
+void statement()
+{
+    int *a, *b;   // for branch contral
+
+    // try print to under standa <if> and <while>
+    if (token == If) {
+        // if (...) <statement> [else <statement>]
+        //
+        //   if (<cond>)                   <cond>
+        //                                 JZ a
+        //     <true_statement>   ===>     <true_statement>
+        //   else:                         JMP b
+        // a:                           a:
+        //     <false_statement>           <false_statement>
+        // b:                           b:
+        match(If);
+        match('(');
+        expression(Assign);   // parse condition
+        match(')');
+
+        *++text = JZ;
+        b       = ++text;
+
+        statement();           // parse statement
+
+        if (token == Else) {   // parse else
+            match(Else);
+
+            // emit code for JMP B.
+            *b      = (int)(text + 3);
+            *++text = JMP;
+            b       = ++text;
+
+            statement();
+        }
+
+        *b = (int)(text + 1);
+    }
+    else if (token == While) {
+        // a:                     a:
+        //    while (<cond>)        <cond>
+        //                          JZ b
+        //     <statement>          <statement>
+        //                          JMP a
+        // b:                     b:
+        match(While);
+        a = text + 1;
+
+        match('(');
+        expression(Assign);
+        match(')');
+
+        *++text = JZ;
+        b = ++text;
+
+        statement();
+
+        *++text = JMP;
+        *++text = (int)a;
+        *b      = (int)(text + 1);
+    }
+    else if (token == Return) {
+        // return [expression];
+        match(Return);
+
+        if (token != ';') {
+            expression(Assign);
+        }
+
+        match(';');
+
+        // emit code for return
+        *++text = LEV;
+    }
+    else if (token == '{') {
+        // { <statement> ... }
+        match('{');
+
+        while (token != '}') {
+            statement();
+        }
+
+        match('}');
+    }
+    else if (token == ';') {
+        // empty statement
+        match(';');
+    }
+    else {
+        // a = b; or function_call();
+        expression(Assign);
+        match(';');
+    }
+}
 
 void enum_declaration()
 {
@@ -449,6 +542,7 @@ void function_body()
                 match(',');
             }
         }
+
         match(';');
     }
     // generate asm code
@@ -760,14 +854,17 @@ int main(int argc, char *argv[])
     ax      = 0;
 
     /* add keywords to symbol table */
-    src = "char else enum if int return sizeof while open read close printf malloc memset memcmp "
-          "exit void main";
-    i   = Char;
+    src = "char else enum if int return sizeof while "
+          "open read close printf malloc memset memcmp exit "
+          "void main";
+
     // add keywords to symbol table
+    i = Char;
     while (i <= While) {
         next();
         current_id[Token] = i++;
     }
+
     // add library to symbol table
     i = OPEN;
     while (i <= EXIT) {
@@ -776,6 +873,7 @@ int main(int argc, char *argv[])
         current_id[Type]  = INT;
         current_id[Value] = i++;
     }
+
     // clang-format off
     next(); current_id[Token] = Char;   // handle void type
     next(); idmain = current_id;        // keep track of main
@@ -798,5 +896,11 @@ int main(int argc, char *argv[])
     close(fd);
 
     program();
+
+    if (!(pc = (int *)idmain[Value])) {
+        printf("main() not defined\n");
+        return -1;
+    }
+
     return eval();
 }
