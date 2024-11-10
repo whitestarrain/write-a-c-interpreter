@@ -62,10 +62,8 @@ int index_of_bp;
 
 // clang-format on
 
-/**
- * lexical analyzer
- * get next token
- */
+// lexical analyzer
+// get next token
 void next()
 {
     char *last_pos;
@@ -86,7 +84,8 @@ void next()
             // parse identifier
             last_pos = src - 1;
             hash     = token;
-            while ((*src >= 'a' && *src <= 'z') || (*src >= 'A' && *src <= 'Z') || (*src >= '0' && *src <= '9') || (*src == '_')) {
+            while ((*src >= 'a' && *src <= 'z') || (*src >= 'A' && *src <= 'Z') ||
+                   (*src >= '0' && *src <= '9') || (*src == '_')) {
                 hash = hash * 147 + *src;
                 src++;
             }
@@ -315,9 +314,7 @@ void match(int tk)
     }
 }
 
-/**
- * analytical expression
- */
+// analytical expression
 void expression(int level)
 {
     int *id;
@@ -584,6 +581,8 @@ void expression(int level)
 
     // binary operator and postfix operator
     while (token >= level) {
+
+        // handle according to current operator's precedence
         tmp = expr_type;
         if (token == Assign) {
             // var = expr;
@@ -610,7 +609,7 @@ void expression(int level)
                 match(':');
             }
             else {
-                printf("%d: missing colonin condition\n", line);
+                printf("%d: missing colon in conditional\n", line);
                 exit(-1);
             }
             *addr   = (int)(text + 3);
@@ -635,6 +634,14 @@ void expression(int level)
             addr    = ++text;
             expression(Or);
             *addr     = (int)(text + 1);
+            expr_type = INT;
+        }
+        else if (token == Or) {
+            // bitwise or
+            match(Or);
+            *++text = PUSH;
+            expression(Xor);
+            *++text   = OR;
             expr_type = INT;
         }
         else if (token == Xor) {
@@ -788,15 +795,15 @@ void expression(int level)
         }
         else if (token == Inc || token == Dec) {
             // postfix inc(++) and dec(--)
-            // increase the value to the variable and decrease it
-            // on `ax` to get its origin value.
-            if (*text == LC) {
-                *text   = PUSH;
-                *++text = LC;
-            }
-            else if (*text == LI) {
+            // we will increase the value to the variable and decrease it
+            // on `ax` to get its original value.
+            if (*text == LI) {
                 *text   = PUSH;
                 *++text = LI;
+            }
+            else if (*text == LC) {
+                *text   = PUSH;
+                *++text = LC;
             }
             else {
                 printf("%d: bad value in increment\n", line);
@@ -812,7 +819,6 @@ void expression(int level)
             *++text = IMM;
             *++text = (expr_type > PTR) ? sizeof(int) : sizeof(char);
             *++text = (token == Inc) ? SUB : ADD;
-
             match(token);
         }
         else if (token == Brak) {
@@ -836,6 +842,10 @@ void expression(int level)
             expr_type = tmp - PTR;
             *++text   = ADD;
             *++text   = (expr_type == CHAR) ? LC : LI;
+        }
+        else {
+            printf("%d: compiler error, token = %d\n", line, token);
+            exit(-1);
         }
     }
 }
@@ -893,7 +903,7 @@ void statement()
         match(')');
 
         *++text = JZ;
-        b = ++text;
+        b       = ++text;
 
         statement();
 
@@ -1173,7 +1183,7 @@ void global_declaration()
             // global variable
             current_id[Class] = Glo;
             current_id[Value] = (int)data;   // assign memory address
-            data = data + sizeof(int);
+            data              = data + sizeof(int);
         }
         if (token == ',') {
             match(',');
@@ -1182,9 +1192,7 @@ void global_declaration()
     next();
 }
 
-/**
- * program entry
- */
+// program entry
 void program()
 {
     next();
@@ -1193,16 +1201,14 @@ void program()
     }
 }
 
-/**
- * virtual machine entry
- */
+// virtual machine entry
 int eval()
 {
     int op, *tmp;
     while (1) {
         op = *pc++;
 
-        /* MOV */
+        // MOV
         if (op == IMM) {
             // load immediate value to ax
             ax = *pc++;
@@ -1236,7 +1242,7 @@ int eval()
             pc = (int *)*pc;
         }
 
-        /* JGE, CMPL */
+        // JGE, CMPL
         else if (op == JZ) {
             // jump if ax is zero
             pc = ax ? pc + 1 : (int *)*pc;
@@ -1267,7 +1273,7 @@ int eval()
             sp = sp + *pc++;   // add esp, <size>
         }
 
-        /* mov + pop + ret */
+        // mov + pop + ret
         // LEV
         else if (op == LEV) {
             // leave current frame, restore call frame and pc
@@ -1282,7 +1288,7 @@ int eval()
             ax = (int)(bp + *pc++);
         }
 
-        /* operators */
+        // operators
         // clang-format off
         else if (op == OR) ax = *sp++ | ax;
         else if (op == XOR) ax = *sp++ ^ ax;
@@ -1302,7 +1308,7 @@ int eval()
         else if (op == MOD) ax = *sp++ % ax;
         // clang-format on
 
-        /* builtin function */
+        // builtin function
         else if (op == EXIT) {
             printf("exit(%d)", *sp);
             return *sp;
@@ -1338,7 +1344,7 @@ int eval()
     }
 }
 
-int main(int argc, char *argv[])
+int main(int argc, char **argv)
 {
     int  i, fd;
     int *tmp;
@@ -1348,20 +1354,21 @@ int main(int argc, char *argv[])
     poolsize = 256 * 1024;
     line     = 1;
 
-    /* allocate memory for virtual machine */
-    if ((text = old_text = malloc(poolsize)) < 0) {
+    // allocate memory for virtual machine
+    //   `unsigned int` type is not supported, so don't use (unsiged int)... < 0
+    if (!(text = old_text = malloc(poolsize))) {
         printf("could not malloc(%d) for text area", poolsize);
         return -1;
     }
-    if ((data = malloc(poolsize)) < 0) {
+    if (!(data = malloc(poolsize))) {
         printf("could not malloc(%d) for data area", poolsize);
         return -1;
     }
-    if ((stack = malloc(poolsize)) < 0) {
+    if (!(stack = malloc(poolsize))) {
         printf("could not malloc(%d) for stack area", poolsize);
         return -1;
     }
-    if ((symbols = malloc(poolsize)) < 0) {
+    if (!(symbols = malloc(poolsize))) {
         printf("could not malloc(%d) for symbols table", poolsize);
         return -1;
     }
@@ -1369,11 +1376,11 @@ int main(int argc, char *argv[])
     memset(data, 0, poolsize);
     memset(stack, 0, poolsize);
 
-    /* initialization registers */
+    // initialization registers
     bp = sp = (int *)((int)stack + poolsize);
     ax      = 0;
 
-    /* add keywords to symbol table */
+    // add keywords to symbol table
     src = "char else enum if int return sizeof while "
           "open read close printf malloc memset memcmp exit "
           "void main";
@@ -1399,7 +1406,7 @@ int main(int argc, char *argv[])
     next(); idmain = current_id;        // keep track of main
     // clang-format on
 
-    /* open and read source file */
+    // open and read source file
     if ((fd = open(*argv, 0)) < 0) {
         printf("could not open(%s)\n", *argv);
         return -1;
