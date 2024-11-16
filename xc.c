@@ -321,6 +321,7 @@ void expression(int level)
     int  tmp;
     int *addr;
 
+    // unary operator
     if (token == Num) {
         match(Num);
 
@@ -1430,6 +1431,8 @@ int main(int argc, char **argv)
     }
 
     sp    = (int *)((int)stack + poolsize);
+
+    // when leave main function, pc point to sp through LEV command
     *--sp = EXIT;   // call exit if main returns
     *--sp = PUSH;
     tmp   = sp;
